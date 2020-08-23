@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Document232</title>
+</head>
+<body>
+	<div id="app">
+		<div class="field" v-for='field in fields'>
+			<div class="row" v-for='(row, x) in field.cells'>
+				<img class="cell" v-for='(cell, y) in row' :src='getSrc(cell, field)' @click='() => {damage(x, y, cell, field); checkFinish()}' />
+			</div>
+		</div>
+		<button @click="() => {restart();randomShips(fields[0], 'Human_data');randomShips(fields[1], 'AI_data')}">rand</button>
+		<button @click='start()'>start</button>
+	</div>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+		}
+		#app {
+			display: flex;
+    		justify-content: space-evenly;
+			margin-top: 80px;
+		}
+		.field {
+			width: 200px;
+			height: 200px;
+			display: grid;
+			grid-template-columns: repeat(10, 1fr);
+			border: 1px solid black;
+			background: gray;
+		}
+		.row {
+			display: grid;
+			width: 20px;
+			height: 200px;
+			grid-template-rows: repeat(10, 1fr);
+		}
+		.cell {
+			width: 20px;
+			height: 20px;
+			background-size: cover;
+		}
+	</style>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+	<script src='vue.js'></script>
+	<script>
+		var vm = new Vue({
+			el: '#app',
+			data: {
+				gameStatus: 'preparation',
+				currentPlayer: 'human',
+				fields: [{
+						player: 'human',
+						cells: [[], [], [], [], [], [], [], [], [], []]
+					},
+					{
+						player: 'ai',
+						cells: [[], [], [], [], [], [], [], [], [], []]
+					}],
+				Human_data: {
+					currentEnemy: [],
+					ships: {
+						p1: [],
+						p2: [],
+						p3: [],
+						p4: []
+					}
+				},
+				AI_data: {
+					enemyCells: [],
+					currentEnemy: [],
+					ships: {
+						p1: [],
+						p2: [],
+						p3: [],
+						p4: []
+					}
+				}
+			},
+			methods: {
+				restart: function() {
+					this.gameStatus = 'preparation';
+					this.fields.forEach(field => {
+						for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) field.cells[i][j] = 'undefined';
+					});
+				},
+				start: function() {
+					this.gameStatus = 'gaming';
+				},
+				checkFinish: function() {
+					let {ships} = this.Human_data;
+					let shipsAI = this.AI_data.ships;
+					if (!ships.p1.length && !ships.p2.length && !ships.p3.length && !ships.p4.length) alert('loose');
+					if (!shipsAI.p1.length && !shipsAI.p2.length && !shipsAI.p3.length && !shipsAI.p4.length) alert('win');
+				},
+				spliceCells: function(field, cells, type, mode) {
+					cells.forEach(el => {
+						if (this.correctCell(el[0], el[1], field.cells) != 'wall')
+						if (mode == 'splice' || (mode == 'fill' && field.cells[el[0]][el[1]] === 'undefined')) field.cells[el[0]].splice([el[1]], 1, type);
+					});
+				},
+				deadEnemy: function(attacker, field) {
+					let enemy = this[attacker].currentEnemy;
+					let line = (enemy[0].x == enemy[1].x) ? 'y' : 'x';
+					let [x, y] = [line=='x', line=='y']
+
+
+					let filtered = enemy.filter((e, i, arr) => {
+						return i>0 ? !(e.x==arr[i-1].x && e.y==arr[i-1].y) : true; 
+					});
+
+					filtered.sort((a, b) => a[line]-b[line])
+					let i = filtered.length-1;
+					this.spliceCells(field, [[filtered[0].x+x, filtered[0].y+y], [filtered[0].x-x, filtered[0].y-y], [filtered[i].x+x, filtered[i].y+y], [filtered[i].x-x, filtered[i].y-y]], 'null', 'fill')
+
+					this[attacker].currentEnemy = [];
+					//console.log(this.Human_data.currentEnemy)
+				},
+				damage: function(x, y, cell, field) {
+					if ((this.currentPlayer == 'human' && field.player == 'human') || this.gameStatus == 'preparation') return;
+					if (this.currentPlayer == 'ai' && field.player == 'ai') return;
+
+					let cells = field.cells;
+					let shipSize;
+
+					if (cell == 'undefined') {
+						this.currentPlayer = (this.currentPlayer == 'human') ? 'ai' : 'human';
+						cells[x].splice([y], 1, 'null');
+					}
+					if (cell == 'ship' && field.player != this.currentPlayer) {
+						let player = !this.currentPlayer == 'human' ? 'AI_data' : 'Human_data';
+						let antiPlayer = (this.currentPlayer == 'human') ? 'AI_data' : 'Human_data';
+
+						
+
+						for (let size = 1; size<5; size++) {
+							
+
+							let thisSize = this[antiPlayer].ships['p'+size].some((el, i) => el.some((el2, j) => {
+								let result = el2.x == x && el2.y == y;
+								if (result) this[antiPlayer].ships['p'+size][i].splice([j], 1);
+								if (size>1 && result) this[player].currentEnemy.push({x,y})
+								if (!el.length) {
+									this[antiPlayer].ships['p'+size].splice([i], 1);
+									if (size > 1) this.deadEnemy(player, field);
+
+								}
+								return result;
+							}))
+							if (thisSize) shipSize = size;
+						}
+
+
+						if (shipSize == 1) {
+							cells[x].splice([y], 1, 'damage');
+
+
+							this.spliceCells(field, [[x+1,y], [x-1,y], [x,y+1], [x,y-1], [x+1,y+1], [x-1,y-1], [x+1,y-1], [x-1,y+1]], 'null', 'splice')
+						}
+						else {
+							cells[x].splice([y], 1, 'damage');
+							this.spliceCells(field, [[x+1,y+1], [x-1,y-1], [x+1,y-1], [x-1,y+1]], 'null', 'splice')
+						}
+						if (this.currentPlayer == 'ai' && cell == 'ship') this.AIAttack();
+					}
+				},
+				getSrc: function(src, field) {
+					return `${(field.player == 'ai' && src == 'ship') ? 'undefined' : src}.png`;
+					//return `${src}.png`;
+				},
+				randomShips: function(field, player) {
+					let spawnShip = (size, count) => {
+						for(let i=0;i<count;i++) {
+							let cell = this.maybeShip(field, size, 'ship');
+							console.log(cell)
+							let x = cell.x;
+							let y = cell.y;
+							let dir = cell.directions || {x: 0, y:0};
+							this[player].ships['p'+size].push([]);
+
+							if (size > 1) {for (let j=0;j<size;j++) {
+								cells[x+j*dir.x].splice([y+j*dir.y], 1, 'ship');
+								this[player].ships['p'+size][i].push({x: x+j*dir.x, y: y+j*dir.y})
+							}}
+							else {
+								cells[x].splice([y], 1, 'ship');
+								this[player].ships['p'+size][i].push({x, y})
+							}
+						}
+
+					}
+
+
+					let cells = field.cells;
+
+					this[player].ships = {
+						p1: [],
+						p2: [],
+						p3: [],
+						p4: []
+					}
+					this[player].currentEnemy = [];
+
+					spawnShip(4, 1);
+					spawnShip(3, 2);
+					spawnShip(2, 3);
+					spawnShip(1, 4);
+				},
+				correctCell: function(x, y, cells) {
+					return (x<0||x>9||y<0||y>9) ? 'wall' : cells[x, y];
+				},
+				checkCells: (cells, cellsData, types, returnType = 'default') => {
+					let correctCell = function(x, y, cells) {
+					return (x<0||x>9||y<0||y>9) ? 'wall' : cells[x, y];
+				}
+						//console.log(cellsData)
+						let i = 0;
+						let res = cellsData.every(cellData => {
+							let cell = correctCell(cellData[0], cellData[1], cells)
+							return types.some(type => {
+								i += type == cell;
+								return type == cell
+							})
+						});
+						//console.log(res)
+						return returnType=='array' ? i : res;
+				},
+				rand: (min, max) => Math.round(min - 0.5 + Math.random() * (max - min + 1)),
+				randomOfArray: function(arr) {
+					return arr[this.rand(0, arr.length-1)]
+				},
+				maybeShip: function(field, size, shipType) {
+					console.log(this.correctCell)
+					let cells = field.cells;
+					let enemyCells = [];
+					let maybeArray = [];
+
+					let checkDirection = (i, j, size, directions) => {
+						//console.log(`${i} ${j}`)
+						let func = (x, y) => {
+							let conditions = [];
+							for (let k = -1; k <= size; k++) {
+								//let mainCells = [[i+(k*x), j+(k*y)]];
+								//let secondaryCells = [[i+(k*x), j+(k*y)], [(x==0 ? 1 : 0)+i, (y==0 ? 1 : 0)+j], [i-(x==0 ? 1 : 0), j-(y==0 ? 1 : 0)]];
+								let cellX = i+(k*x);
+								let cellY = j+(k*y);
+								let X = x==0 ? 1 : 0;
+								let Y = y==0 ? 1 : 0;
+								let mainCells = [[cellX, cellY]];
+								let secondaryCells = [[cellX, cellY], [cellX+X, cellY+Y], [cellX-X, cellY-Y]];
+								if (k >= 0 && k <= size-1) conditions.push(this.checkCells(cells, mainCells, ['undefined']));
+								conditions.push(this.checkCells(cells, secondaryCells, ['undefined', 'wall']))
+
+
+								if (!conditions.every(e => e)) return;
+							}
+							if (conditions.every(e => e)) directions.push({x, y});
+						}
+
+						func(1, 0); func(-1, 0); func(0, 1); func(0, -1);
+						return directions.length;
+					}
+
+					let checkZoneForAnEnemy = () => {
+
+						let enemyArray = [];
+						let tenXCells = [];
+						let tenYCells = [];
+
+						for (let i = 0; i < cells.length; i++) for (let j = 0; j < 10; j++) {
+							if (j == 0) tenXCells[i] = [];
+							if (enemyCells.some(el => el.x == i && el.y == j)) {
+								if (!tenXCells[i]) tenXCells[i] = [];
+								tenXCells[i].push(j);
+							}
+						}
+						for (let j = 0; j < cells.length; j++) for (let i = 0; i < 10; i++) {
+							if (j == 0) tenXCells[i] = [];
+							if (enemyCells.some(el => el.x == i && el.y == j)) {
+								if (!tenYCells[i]) tenYCells[i] = [];
+								tenYCells[i].push(j);
+							} 
+						}
+
+
+						let filterCells = cells => {
+							for (let i = 0; i<=10; i++) {
+								let arr = cells[i];
+                                if (!arr) return;
+								let k = 0;
+					            let buffer = [];
+					            let finalArr = [];
+
+						        for (j = 0; j < 11; j++) {
+					                let k = buffer.length;
+					                //console.log(buffer);console.log(k)
+					                if (arr.includes(j)) buffer.push(j);
+					                else {
+					                    if (k >= size && !arr.includes(j)) finalArr = [...finalArr, ...buffer];
+					                    buffer = []
+					                }
+		            			}
+		            			cells[i] = finalArr;
+							}
+						}
+						filterCells(tenXCells);
+						filterCells(tenYCells);
+						console.log(enemyCells)
+						console.log(tenXCells)
+
+
+						let xArray = [];
+						let yArray = [];
+						tenXCells.forEach((e,i) => e.forEach(e2 => xArray.push({x: i, y:e2})))
+						tenYCells.forEach((e,i) => e.forEach(e2 => yArray.push({x: i, y:e2})))
+
+						let outputCells = [...xArray, ...yArray];
+
+						let intersections = [];
+						outputCells.forEach(el => {
+							let i = 0;
+							outputCells.forEach(el2 => i += (el.x == el2.x && el.y == el2.y));
+							if (i >= 2) intersections.push(el);
+						});
+
+
+						return intersections.length ? intersections : enemyCells;
+					}
+
+
+
+					for (let i = 0; i < cells.length; i++) for (let j = 0; j < 10; j++) {
+						let enemy;
+						let ship;
+						let directions = [];
+						let cell = cells[i][j];
+						let ship1Cells = [[i+1, j], [i-1, j], [i, j+1], [i, j-1], [i+1, j+1], [i-1, j+1], [i-1, j-1], [i+1, j-1]];
+						
+						if (shipType == 'ship' && cell === 'undefined') {
+							if (size == 1) {
+								ship = this.checkCells(cells, ship1Cells, ['wall', 'undefined'], cells);
+								if (ship) maybeArray.push({x: i, y: j, directions})
+							}																			//поиск места для установки корабля
+							else if (checkDirection(i, j, size, directions)) maybeArray.push({x: i, y: j, directions: this.randomOfArray(directions)});
+						}
+						else if (shipType == 'enemy' && (cell === 'undefined' || cell == 'ship')) {
+							enemy = this.checkCells(cells, ship1Cells, ['wall', 'null', 'undefined', 'ship'], cells);
+							if (enemy) {
+								if (size == 1) maybeArray.push({x: i, y: j});
+								else enemyCells.push({x: i, y: j});
+							}
+						}
+						//console.log(directions)
+					}
+
+					if (shipType == 'enemy' && size > 1) maybeArray = checkZoneForAnEnemy();
+
+					return this.randomOfArray(maybeArray);
+				},
+				AIAttack: function() {
+					if (this.currentPlayer == 'ai') {
+						let cells = this.fields[0].cells;
+						if (this.AI_data.currentEnemy.length) {
+							if (this.AI_data.currentEnemy.length == 1 && !this.AI_data.enemyCells.length) {
+								this.AI_data.enemyCells.push(this.AI_data.currentEnemy[0]);
+							}
+							else if (this.AI_data.enemyCells.length == 1) {
+								let checkCellZone = (mainCell, dir) => {
+									let i = mainCells.x+dir[0];
+									let j = mainCells.y+dir[1];
+									let shipCells = [[i+1, j], [i-1, j], [i, j+1], [i, j-1], [i+1, j+1], [i-1, j+1], [i-1, j-1], [i+1, j-1]];
+									return this.checkCells(cells, shipCells, ['wall', 'null', 'undefined', 'ship']/*, cells*/, 'array').length==8
+								}
+								let enemyCell = this.AI_data.enemyCells[0];
+
+								let attackCell = [];
+								if (checkCellZone(enemyCell, [0, 1]).length == 8) attackCell.push([0, 1]);
+								if (checkCellZone(enemyCell, [0, -1]).length == 8) attackCell.push([0, -1]);
+								if (checkCellZone(enemyCell, [1, 0]).length == 8) attackCell.push([1, 0]);
+								if (checkCellZone(enemyCell, [-1, 0]).length == 8) attackCell.push([-1, 0]);
+								
+								let cell = this.randomOfArray(attackCell);
+								this.damage(cell.x, cell.y, this.fields[0].cells[cell.x][cell.y], this.fields[0])
+
+
+								if (this.AI_data.currentEnemy.length == 2) this.AI_data.enemyCells.push(this.AI_data.currentEnemy[1]);
+
+							}
+							else {
+								let enemy = this.AI_data.enemyCells;
+								let line = (enemy[0].x == enemy[1].x) ? 'y' : 'x';
+								let [x, y] = [line=='x', line=='y']
+
+								enemy.sort((a, b) => a[line]-b[line])
+								let i = filtered.length-1;
+
+								let cell = this.randomOfArray([enemy[0][line]+1, enemy[0][line]-1]);
+								this.damage(cell.x, cell.y, this.fields[0].cells[cell.x][cell.y], this.fields[0]);
+							}
+						}
+						else {
+							let cell = this.maybeShip(this.fields[0], 4, 'enemy');
+							console.log(cell)
+							this.damage(cell.x, cell.y, this.fields[0].cells[cell.x][cell.y], this.fields[0])
+						}
+					}
+				}
+			},
+			watch: {
+				currentPlayer: function() {
+					this.AIAttack();
+				}
+			},
+			created: function() {
+				this.restart();
+			}
+		});
+	</script>
+</body>
+</html>
